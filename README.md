@@ -81,11 +81,6 @@ Previews can be customized by adding extra arguments in the `run` string:
 ```toml
 [plugin]
 prepend_previewers = [
-	# Change the top-level archive icon
-	{ ..., run = "ouch --archive-icon='🗄️ '" },
-	# Or remove it by setting it to ''
-	{ ..., run = "ouch --archive-icon=''" },
-
 	# Enable file icons
 	{ ..., run = "ouch --show-file-icons" },
 
@@ -96,7 +91,7 @@ prepend_previewers = [
   { ..., run = "ouch --format=zip" },
 
 	# These can be combined
-	{ ..., run = "ouch --archive-icon='🗄️ ' --show-file-icons --list-view" },
+	{ ..., run = "ouch --show-file-icons --list-view" },
 ]
 ```
 

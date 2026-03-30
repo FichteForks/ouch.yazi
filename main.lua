@@ -1,3 +1,5 @@
+--- @since 25.12.29
+
 local M = {}
 
 -- Extract the tree prefix (if any) from a line
@@ -15,21 +17,21 @@ local function line_with_icon(line)
   line = line:gsub("[\r\n]+$", "") -- Trailing newlines mess with filetype detection
 
   local tree_prefix = get_tree_prefix(line)
-  local url = line:sub(#tree_prefix + 1)
+  local url_str = line:sub(#tree_prefix + 1)
+  local url = Url(url_str)
+  local name = url.name
+  local is_dir = url_str:sub(-1) == "/"
   local file = File({
-    url = Url(url),
+    url = url,
+    name = name,
     cha = Cha {
-      mode = tonumber(url:sub(-1) == "/" and "40700" or "100644", 8),
-      kind = url:sub(-1) == "/" and 1 or 0, -- For Yazi <25.9.x compatibility
+      mode = tonumber(is_dir and "40700" or "100644", 8),
     }
   })
   local icon = th.icon:match(file)
-
-  if icon then
-    line =  ui.Line { tree_prefix, ui.Span(icon.text .. " "):style(icon.style), url }
-  end
-
-  return line
+  local icon_span = icon and ui.Span(icon.text .. " "):style(icon.style) or ""
+  local name_span = ui.Span(name)--.style(file:style()) -- TODO does not work
+  return ui.Line { tree_prefix, icon_span, name_span }
 end
 
 function M:peek(job)
@@ -41,41 +43,55 @@ function M:peek(job)
     cmd:arg({"-f", job.args.format})
   end
   cmd:arg({ "-y", tostring(job.file.url) })
-      :stdout(Command.PIPED)
-      :stderr(Command.PIPED)
 
-  local child = cmd:spawn()
+  local child = cmd
+    :stdout(Command.PIPED)
+    :stderr(Command.PIPED)
+    :spawn()
+
   local limit = job.area.h
-  local archive_icon = job.args.archive_icon or "\u{1f4c1} "
-  local file_name = string.match(tostring(job.file.url), ".*[/\\](.*)")
-  local lines = { string.format(" %s%s", archive_icon, file_name) }
   local num_skip = 0
+  local lines = {}
+
+  if job.args.show_file_icons then
+      table.insert(lines, ui.Line({line_with_icon(job.file.name)}))
+    else
+      table.insert(lines, ui.Line({job.file.name}))
+  end
+
   repeat
     local line, event = child:read_line()
-    if event == 1 then
-      ya.err(tostring(event))
-    elseif event ~= 0 then
+    if event == 2 or line == nil then
       break
     end
-
-    if line:find('Archive', 1, true) ~= 1 and line:find('[INFO]', 1, true) ~= 1 then
-      if num_skip >= job.skip then
-        if job.args.show_file_icons then
-          if line:find ('[ERROR]', 1, true) == 1 then
-            -- On error, disable file icons for the rest of the output
-            job.args.show_file_icons = false
-          elseif line:find ('[WARNING]', 1, true) ~= 1 then
-            -- Show icons for non-warning lines only
-            line = line_with_icon(line)
-          end
-        end
-
-        line = ui.Line { " ", line } -- One space padding
-        table.insert(lines, line)
-      else
-        num_skip = num_skip + 1
+    if event == 1 then
+      -- line is from stderr
+      local is_err_line = line:find ('[ERROR]', 1, true) == 1
+      if is_err_line then
+        ya.err("ouch error:", line)
+        -- Disable file icons for the rest of the output.
+        job.args.show_file_icons = false
       end
+      -- Include line verbatim (with padding) and continue.
+      table.insert(lines, ui.Line(line))
+      goto next_line
     end
+
+    if line:find('Archive:', 1, true) then
+      goto next_line
+    end
+
+    if num_skip < job.skip then
+      num_skip = num_skip + 1
+      goto next_line
+    end
+
+    if job.args.show_file_icons then
+      table.insert(lines, ui.Line({line_with_icon(line)}))
+    else
+      table.insert(lines, ui.Line(line))
+    end
+    ::next_line::
   until #lines >= limit
 
   child:start_kill()
